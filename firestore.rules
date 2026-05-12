@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email == 'levipicolino@gmail.com' && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Products Rules
+    match /products/{productId} {
+      function isValidProduct(data) {
+        return data.keys().hasAll(['name', 'price', 'description', 'category', 'sizes', 'colors', 'image_urls', 'featured', 'in_stock', 'created_at']) &&
+               data.keys().size() == 10 &&
+               data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+               data.price is number && data.price >= 0 &&
+               data.description is string && data.description.size() <= 2000 &&
+               data.category is string && data.category.size() > 0 &&
+               data.sizes is list && data.sizes.size() <= 20 &&
+               data.colors is list && data.colors.size() <= 20 &&
+               data.image_urls is list && data.image_urls.size() <= 10 &&
+               data.featured is bool &&
+               data.in_stock is bool &&
+               data.created_at is timestamp;
+      }
+
+      allow get: if true;
+      allow list: if true; // Public catalog search/list
+      
+      allow create: if isAdmin() && 
+                      isValidId(productId) && 
+                      isValidProduct(incoming()) &&
+                      incoming().created_at == request.time;
+
+      allow update: if isAdmin() && 
+                      isValidProduct(incoming()) &&
+                      incoming().created_at == existing().created_at; // Immutable createdAt
+                      
+      allow delete: if isAdmin();
+    }
+
+    // Admins Rules
+    match /admins/{adminId} {
+      allow read: if isSignedIn() && (request.auth.uid == adminId || isAdmin());
+      allow write: if isAdmin(); 
+    }
+  }
+}
